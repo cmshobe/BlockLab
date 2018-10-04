@@ -71,6 +71,11 @@ soil_transport_decay_depth = 0.1
 max_soil_production_rate = 1.e-3
 soil_production_decay_depth = 0.2
 
+#define hillslope nodes for which to save erosion rate time series
+downstream_hillslope_node = 1 #node number along channel (bottom to top)
+middle_hillslope_node = 60
+upstream_hillslope_node = 120
+
 #define parameters governing resistant rock layer
 thickness = 1 #number of blocks thick
 block_height = 1
@@ -170,6 +175,14 @@ blocks.instantiate_tracking_matrix()
 channel_node_elevs_for_saving = np.zeros((save_profiles_every / timestep, len(channel_nodes) + 1))
 channel_node_cover_fracs_for_saving = np.zeros((save_profiles_every / timestep, len(channel_nodes) + 1))
 
+#instantiate arrays for tracking erosion rates at 3 points on the hillslope
+downstream_hillslope = channel_nodes[downstream_hillslope_node] - 1
+middle_hillslope = channel_nodes[middle_hillslope_node] - 1
+upstream_hillslope = channel_nodes[upstream_hillslope_node] - 1
+downstream_channel_adjacent_node = np.zeros(int(time_to_run/timestep))
+middle_channel_adjacent_node = np.zeros(int(time_to_run/timestep))
+upstream_channel_adjacent_node = np.zeros(int(time_to_run/timestep))
+
 hog.setup_block_tracking_arrays() 
 
 slope_threshold, slope_rad = hog.setup_horizontal_layer(thickness,
@@ -194,6 +207,7 @@ fr.run_one_step()
 elapsed_time = 0
 loop_iter = 0
 profile_save_counter = 0
+hillslope_save_counter = 0
 
 while elapsed_time < time_to_run:
     if elapsed_time == 0:
@@ -380,6 +394,13 @@ while elapsed_time < time_to_run:
     #sum bedrock and soil to get topographic elevation
     mg.at_node['topographic__elevation'][:] = mg.at_node['bedrock__elevation'] + mg.at_node['soil__depth']
     
+    #calc and save hillslope erosion rates at 3 points every timestep
+    downstream_channel_adjacent_node[hillslope_save_counter] = mg.at_node['topographic__elevation'][downstream_hillslope] - block_sizes[downstream_hillslope]
+    middle_channel_adjacent_node[hillslope_save_counter] = mg.at_node['topographic__elevation'][middle_hillslope] - block_sizes[middle_hillslope]
+    upstream_channel_adjacent_node[hillslope_save_counter] = mg.at_node['topographic__elevation'][upstream_hillslope] - block_sizes[upstream_hillslope]
+
+    hillslope_save_counter += 1
+    
     #populate channel node elevation array, which gets saved every _____ years
     temp_channel = mg.at_node['topographic__elevation'][channel_nodes]
     temp_channel = np.insert(temp_channel, 0, mg.at_node['topographic__elevation'][baselevel_node])
@@ -433,3 +454,8 @@ while elapsed_time < time_to_run:
         print elapsed_time
     
     loop_iter += 1
+    
+#once model is finished, save out erosion rate time series at chosen hillslope nodes
+np.save(directory + '/' + name_prefix + '_downstream_hillslope.npy', downstream_channel_adjacent_node)
+np.save(directory + '/' + name_prefix + '_middle_hillslope.npy', middle_channel_adjacent_node)
+np.save(directory + '/' + name_prefix + '_upstream_hillslope.npy', upstream_channel_adjacent_node)
