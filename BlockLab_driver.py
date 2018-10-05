@@ -128,7 +128,7 @@ mg.at_node['bedrock__elevation'][:] = initial_elevation
 #give channel a slope towards baselevel #operate on BR elev b/c summation is after
 #define channel nodes
 channel_nodes = mg.nodes_at_right_edge - int((nc/2) + 0.5)
-baselevel_node = mg.nodes_at_right_edge[0] - int((nc/2) + 0.5) #this is passed into brake.erode_bed for fastscape
+baselevel_node = mg.nodes_at_right_edge[0] - int((nc/2) + 0.5) #this is passed into brake.erode_bed
 
 mg.at_node['bedrock__elevation'][channel_nodes] = initial_elevation - 0.001 * (max(mg.node_y[channel_nodes]) - mg.node_y[channel_nodes])
 
@@ -148,6 +148,7 @@ mg.status_at_node[second_boundary_layer] = CLOSED_BOUNDARY
 #inititalize resistant layer
 starting_point = max(mg.node_x) - (2 * dx)
 
+#route flow
 fr = FlowDirectorD8(mg,'topographic__elevation')
 
 #instantiate BRaKE, the collection of functions governing river evolution
@@ -291,10 +292,7 @@ while elapsed_time < time_to_run:
     
     #inner loop iterates across all channel nodes 
     for x in stack: #np.flipud(stack):    
-        if mg.status_at_node[x] == 0:
-            #get new blocks from hillslope component
-            #real block position and size array will come from rachel
-            
+        if mg.status_at_node[x] == 0:          
             #define which blocks are in this node:
             is_block_in_cell = blocks.tracking_mat[0:blocks.for_slicing, 0] == x 
             
@@ -394,7 +392,7 @@ while elapsed_time < time_to_run:
     #sum bedrock and soil to get topographic elevation
     mg.at_node['topographic__elevation'][:] = mg.at_node['bedrock__elevation'] + mg.at_node['soil__depth']
     
-    #calc and save hillslope erosion rates at 3 points every timestep
+    #calc and save hillslope topography at 3 points every timestep
     downstream_channel_adjacent_node[hillslope_save_counter] = mg.at_node['topographic__elevation'][downstream_hillslope] - block_sizes[downstream_hillslope]
     middle_channel_adjacent_node[hillslope_save_counter] = mg.at_node['topographic__elevation'][middle_hillslope] - block_sizes[middle_hillslope]
     upstream_channel_adjacent_node[hillslope_save_counter] = mg.at_node['topographic__elevation'][upstream_hillslope] - block_sizes[upstream_hillslope]
