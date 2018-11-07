@@ -84,7 +84,7 @@ class HogLab(object):
         thickness = thickness * block_height * np.cos(slope_rad) * block_width
         #starting_point = ncols*dx/2 #x values where layer begins
         intercept = initial_elevation - (np.tan(slope_rad) * starting_point)
-        top_of_hard_layer[:] = slope_rad * x_coordinate_array + intercept
+        top_of_hard_layer[:] = np.tan(slope_rad) * x_coordinate_array + intercept
         bottom_of_hard_layer[:] = top_of_hard_layer[:] - \
             (thickness / np.cos(slope_rad))
         #hard_layer = np.where((bedrock_elevation <= top_of_hard_layer) & \
