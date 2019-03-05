@@ -13,7 +13,9 @@ Language: Python 2.7 with Numpy and Cython
 Development timeline:
     -Coupling between Landlab, BRaKE, and HogLab begin January 2018
     -Model coupling and testing completed June 2018
-    -Archived on GitHub October 2019
+    -Archived on GitHub October 2018
+    -Revised and re-released on GitHub March 2019
+    
 """
 #import all required model functionality
 from __future__ import division
@@ -39,7 +41,7 @@ if not os.path.exists(directory):
     os.makedirs(directory)
     
 #define run params
-time_to_run = 1000000 #years
+time_to_run = 500000 #years
 timestep = 2 #years
 plot_every = 1000 #years
 nplots = time_to_run/plot_every
@@ -78,13 +80,13 @@ middle_hillslope_node = 60
 upstream_hillslope_node = 120
 
 #define parameters governing resistant rock layer
-thickness = 1 #number of blocks thick
-block_height = 1
+thickness = 0.5 #number of blocks thick
+block_height = thickness
 nrocks = 12
 dip = 20
 max_block_weathering_rate = 5e-5 
 block_channel_weathering_rate = 0
-release_relief_threshold = 2 #cliff release relief threshold
+release_relief_threshold = thickness+1 #cliff release relief threshold
 block_motion_threshold = 2 #must be multiple of block_height
 
 bedrock_elevation = mg.add_zeros('node', 'bedrock__elevation')
@@ -160,8 +162,8 @@ hillslopeflux = DepthDependentDiffuser(mg, linear_diffusivity = linear_diffusivi
                                        soil_transport_decay_depth = soil_transport_decay_depth)
 
 #instantiate exponential weathering component, from Landlab
-weatheringrate = ExponentialWeatherer(mg, max_soil_production_rate = max_soil_production_rate, 
-                                      soil_production_decay_depth = soil_production_decay_depth)
+weatheringrate = ExponentialWeatherer(mg, soil_production__maximum_rate = max_soil_production_rate, 
+                                      soil_production__decay_depth = soil_production_decay_depth)
 
 #set boundary elevations to enable easier data visualization in Paraview
 mg.at_node['topographic__elevation'][mg.boundary_nodes] -= (bl_drop * time_to_run)
@@ -174,8 +176,8 @@ blocks.instantiate_tracking_matrix()
 
 #instantiate channel elev and cover frac arrays for saving
 #these are arrays that will get saved every xxxx years to conserve memory
-channel_node_elevs_for_saving = np.zeros((save_profiles_every / timestep, len(channel_nodes) + 1))
-channel_node_cover_fracs_for_saving = np.zeros((save_profiles_every / timestep, len(channel_nodes) + 1))
+channel_node_elevs_for_saving = np.zeros((int(save_profiles_every / timestep), int(len(channel_nodes) + 1)))
+channel_node_cover_fracs_for_saving = np.zeros((int(save_profiles_every / timestep), int(len(channel_nodes) + 1)))
 
 #instantiate arrays for tracking erosion rates at 3 points on the hillslope
 downstream_hillslope = channel_nodes[downstream_hillslope_node] - 1
@@ -393,7 +395,11 @@ while elapsed_time < time_to_run:
     mg.at_node['bedrock__elevation'][baselevel_node] -= bl_drop * timestep
 	
     #sum bedrock and soil to get topo elev
-    mg.at_node['topographic__elevation'][:] = mg.at_node['bedrock__elevation'] + mg.at_node['soil__depth']                    
+    mg.at_node['topographic__elevation'][:] = mg.at_node['bedrock__elevation'] + mg.at_node['soil__depth']      
+
+    #get block locations
+    block_sizes[:] = 0
+    block_sizes[hog.block_locations] = hog.block_sizes               
     
     #calc and save hillslope topography at 3 points every timestep
     downstream_channel_adjacent_node[hillslope_save_counter] = mg.at_node['topographic__elevation'][downstream_hillslope] - block_sizes[downstream_hillslope]
@@ -446,11 +452,6 @@ while elapsed_time < time_to_run:
             block_sizes[channel_nodes] = temp_chan_sizes[:]
             write_netcdf(directory + '/' + name_prefix + str(elapsed_time) + '.nc', mg, format='NETCDF3_64BIT', names=('topographic__elevation','block_sizes'))
             block_sizes[channel_nodes] = 0
-        
-        #save channel elevations as .npy
-        channel_node_elevs_for_saving = mg.at_node['topographic__elevation'][channel_nodes]
-        channel_node_elevs_for_saving = np.insert(channel_node_elevs_for_saving, 0, mg.at_node['topographic__elevation'][baselevel_node])
-        np.save(directory + '/' + name_prefix + '_chan_elev' + str(elapsed_time) + '.npy', channel_node_elevs_for_saving)
         
         print elapsed_time
     

@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-Driver script for BlockLab blocky landscape evolution model. This driver calls 
-functions from Landlab (Hobley et al., 2017), BRaKE (Shobe et al., 2016; 2018),
-and HogLab (Glade et al., 2017; 2018).
+Driver script for BlockLab landscape evolution model control cases, in which
+blocks falling from the resistant caprock instantaneously turn to soil rather
+than remaining as large blocks of rock. This driver calls functions from 
+Landlab (Hobley et al., 2017), BRaKE (Shobe et al., 2016; 2018), and HogLab 
+(Glade et al., 2017; 2018).
 
 Authors: Rachel Glade and Charles Shobe, University of Colorado, Boulder
 
@@ -11,7 +13,8 @@ Language: Python 2.7 with Numpy and Cython
 Development timeline:
     -Coupling between Landlab, BRaKE, and HogLab begin January 2018
     -Model coupling and testing completed June 2018
-    -Archived on GitHub October 2019
+    -Archived on GitHub October 2018
+    -Revised and re-released on GitHub March 2019
     
 """
 #import all required model functionality
@@ -25,7 +28,7 @@ from landlab.components import FlowDirectorD8
 from landlab.components import DepthDependentDiffuser, ExponentialWeatherer
 np.set_printoptions(threshold = np.nan)
 from landlab.io.netcdf import write_netcdf
-from cfuncs import erode_bed, move_blocks
+from cfuncs import erode_bed
 from landlab import CLOSED_BOUNDARY
 
 ######INITIALIZE: MODEL SETUP AND PARAMETERS##################################
@@ -36,9 +39,9 @@ name_prefix = input("Enter run name, use quotes: ")
 directory = 'runs/' + name_prefix
 if not os.path.exists(directory):
     os.makedirs(directory)
-
+    
 #define run params
-time_to_run = 1000000 #years
+time_to_run = 500000 #years
 timestep = 2 #years
 plot_every = 1000 #years
 nplots = time_to_run/plot_every
@@ -77,13 +80,13 @@ middle_hillslope_node = 60
 upstream_hillslope_node = 120
 
 #define parameters governing resistant rock layer
-thickness = 1 #number of blocks thick
-block_height = 1
+thickness = 0.8 #number of blocks thick
+block_height = thickness
 nrocks = 12
 dip = 20
 max_block_weathering_rate = 5e-5 
 block_channel_weathering_rate = 0
-release_relief_threshold = 2 #cliff release relief threshold
+release_relief_threshold = thickness+1 #cliff release relief threshold
 block_motion_threshold = 2 #must be multiple of block_height
 
 bedrock_elevation = mg.add_zeros('node', 'bedrock__elevation')
@@ -125,7 +128,7 @@ underlying_soil_depth = mg.add_zeros('node', 'underlying_soil_depth')
 initial_elevation = 100 #initial elevation
 mg.at_node['bedrock__elevation'][:] = initial_elevation
 
-#give channel a slope towards baselevel #operate on BR elev b/c summation is after
+#give channel a slope towards baselevel #operate on BR elev b/c sumation is after
 #define channel nodes
 channel_nodes = mg.nodes_at_right_edge - int((nc/2) + 0.5)
 baselevel_node = mg.nodes_at_right_edge[0] - int((nc/2) + 0.5) #this is passed into brake.erode_bed
@@ -152,15 +155,15 @@ starting_point = max(mg.node_x) - (2 * dx)
 fr = FlowDirectorD8(mg,'topographic__elevation')
 
 #instantiate BRaKE, the collection of functions governing river evolution
-blocks = bl.BrakeLandlab() 
+blocks = bl.BrakeLandlab() #create an instance of the class
 
 #instantiate hillslope diffusion model component, from Landlab
 hillslopeflux = DepthDependentDiffuser(mg, linear_diffusivity = linear_diffusivity, 
                                        soil_transport_decay_depth = soil_transport_decay_depth)
 
 #instantiate exponential weathering component, from Landlab
-weatheringrate = ExponentialWeatherer(mg, max_soil_production_rate = max_soil_production_rate, 
-                                      soil_production_decay_depth = soil_production_decay_depth)
+weatheringrate = ExponentialWeatherer(mg, soil_production__maximum_rate = max_soil_production_rate, 
+                                      soil_production__decay_depth = soil_production_decay_depth)
 
 #set boundary elevations to enable easier data visualization in Paraview
 mg.at_node['topographic__elevation'][mg.boundary_nodes] -= (bl_drop * time_to_run)
@@ -173,13 +176,28 @@ blocks.instantiate_tracking_matrix()
 
 #instantiate channel elev and cover frac arrays for saving
 #these are arrays that will get saved every xxxx years to conserve memory
-channel_node_elevs_for_saving = np.zeros((save_profiles_every / timestep, len(channel_nodes) + 1))
-channel_node_cover_fracs_for_saving = np.zeros((save_profiles_every / timestep, len(channel_nodes) + 1))
+channel_node_elevs_for_saving = np.zeros((int(save_profiles_every / timestep), int(len(channel_nodes) + 1)))
+channel_node_cover_fracs_for_saving = np.zeros((int(save_profiles_every / timestep), int(len(channel_nodes) + 1)))
 
 #instantiate arrays for tracking erosion rates at 3 points on the hillslope
 downstream_hillslope = channel_nodes[downstream_hillslope_node] - 1
 middle_hillslope = channel_nodes[middle_hillslope_node] - 1
 upstream_hillslope = channel_nodes[upstream_hillslope_node] - 1
+downstream_channel_adjacent_node = np.zeros(int(time_to_run/timestep))
+middle_channel_adjacent_node = np.zeros(int(time_to_run/timestep))
+upstream_channel_adjacent_node = np.zeros(int(time_to_run/timestep))
+
+hillslope_nodes = np.copy(mg.core_nodes)
+for fish in range(len(hillslope_nodes)):
+    if hillslope_nodes[fish] in channel_nodes:
+        hillslope_nodes[fish] = -9999
+hillslope_nodes_delete = np.where(hillslope_nodes == -9999)[0]
+hillslope_nodes = np.delete(hillslope_nodes, hillslope_nodes_delete)
+
+#time loop
+elapsed_time = 0
+loop_iter = 0
+profile_save_counter = 0
 downstream_channel_adjacent_node = np.zeros(int(time_to_run/timestep))
 middle_channel_adjacent_node = np.zeros(int(time_to_run/timestep))
 upstream_channel_adjacent_node = np.zeros(int(time_to_run/timestep))
@@ -238,40 +256,32 @@ while elapsed_time < time_to_run:
         np.save(directory + '/' + name_prefix + '_param_dict.npy', param_dict) #load with "params = np.load('param_dict.py').item()"
     
     drop_locations = hog.find_release_location(bedrock_elevation,
-                                               top_of_hard_layer,
-                                               bottom_of_hard_layer,
-                                               slope,
-                                               slope_threshold,
-                                               channel_nodes)    
-    hog.release_blocks(z,
-                    bedrock_elevation,
-                    slope_threshold,
-                    mg.core_nodes,
-                    underlying_soil_depth,
-                    soil_depth,
-                    slope_rad,
-                    drop_locations,
-                    block_height,
-                    mg.at_node['flow__receiver_node'], channel_nodes, slope, release_relief_threshold)
-                    
+                                                                    top_of_hard_layer,
+                                                                    bottom_of_hard_layer,
+                                                                    slope,
+                                                                    slope_threshold,
+                                                                    channel_nodes)    
     
-    hog.block_locations, hog.block_sizes, hog.cum_channel_blocks, hog.blocks_to_channel_size, hog.blocks_to_channel_location = move_blocks(hog.block_locations,
-                                             hog.block_sizes,
-                                             mg.at_node['topographic__steepest_slope'], 
-                                             block_motion_threshold,
-                                             mg.node_spacing,
-                                             soil_depth,
-                                             underlying_soil_depth,
-                                             bedrock_elevation,
-                                             z,
-                                             mg.at_node['flow__receiver_node'], 
-                                             mg.core_nodes,
-                                             channel_nodes,
-                                             hog.hillslope_nodes,
-                                             hog.blocks_to_channel_size,
-                                             hog.blocks_to_channel_location,
-                                             hog.cum_channel_blocks)
-                                               
+    #retreat hard layer
+    if drop_locations.size:
+        for n in range(len(drop_locations)):
+            z[drop_locations[n]] -= block_height / np.cos(slope_rad)
+            bedrock_elevation[drop_locations[n]] -= block_height / np.cos(slope_rad)
+
+            #retreat layer edge by 1
+            hog.hard_layer[np.where(hog.hard_layer == drop_locations[n])[0]] = -9999
+
+            #though we're not producing blocks, we want to add soil depth into "block receiving" cells. 
+            soil_locations_new = mg.at_node['flow__receiver_node'][drop_locations[n]] #sets block locations in next downhill steepest cell
+
+            if soil_locations_new in hillslope_nodes:
+                mg.at_node['soil__depth'][soil_locations_new] += block_height
+                mg.at_node['topographic__elevation'][soil_locations_new] += block_height
+
+        hard_layer_delete = np.where(hog.hard_layer == -9999)[0]
+        hog.hard_layer = np.delete(hog.hard_layer, hard_layer_delete)
+
+                    
     #route flow 
     fr.run_one_step()
                                                                             
@@ -286,13 +296,13 @@ while elapsed_time < time_to_run:
     
     #can do this outside of spatial loop b/c it's just getting blocks into tracking matrix
     blocks.track_new_blocks(delivery_size_and_position_array, 
-                                          channel_nodes) 
+                                          channel_nodes)
     
     stack = channel_nodes #get stack
+    #inner loop iterates across all nodes
     
-    #inner loop iterates across all channel nodes 
     for x in stack: #np.flipud(stack):    
-        if mg.status_at_node[x] == 0:          
+        if mg.status_at_node[x] == 0:
             #define which blocks are in this node:
             is_block_in_cell = blocks.tracking_mat[0:blocks.for_slicing, 0] == x 
             
@@ -310,12 +320,12 @@ while elapsed_time < time_to_run:
                                                 mg.node_spacing,
                                                 drag_cube,
                                                 drag_stress_array,
-                                                channel_width) 
+                                                channel_width)
         
             #calculate the cover fraction
             blocks.calc_cover_frac(is_block_in_cell, x, mg.node_spacing,
                                    channel_width,
-                                   cover_fraction_array) 
+                                   cover_fraction_array)
         else:
             pass
         
@@ -330,17 +340,19 @@ while elapsed_time < time_to_run:
                      timestep,
                      downslope_link_length_array,
                      adjusted_shear_stress_array,
-                     baselevel_node) 
+                     baselevel_node)
                      
-    #need bedrock erosion to equal new topographic elevation
+    #for supplecupple, need bedrock erosion to equal new topographic elevation
     mg.at_node['bedrock__elevation'][channel_nodes] = mg.at_node['topographic__elevation'][channel_nodes]
         
     #now back into a second 'for' loop to do block transport and degradation
-    for x in stack:
+    for x in stack:#np.flipud(stack):    
         if mg.status_at_node[x] == 0:
             receiver = mg.at_node['flow__receiver_node'][x] #receiver of current node
             #calculate force balance for block motion
-            is_block_in_cell = blocks.tracking_mat[0:blocks.for_slicing, 0] == x 
+            
+            #re-do is_block_in_cell after block motion
+            is_block_in_cell = blocks.tracking_mat[0:blocks.for_slicing, 0] == x
             blocks.calc_force_balance(is_block_in_cell, 
                                       mg.at_node['flow_depth'][x], 
                                       mg.at_node['flow_velocity'][x], 
@@ -348,11 +360,10 @@ while elapsed_time < time_to_run:
                                       mg.at_node['topographic__steepest_slope'][x], 
                                       receiver,
                                       channel_nodes,
-                                      baselevel_node, x) 
+                                      baselevel_node, x)
             
             #re-do is_block_in_cell after block motion
-            is_block_in_cell = blocks.tracking_mat[0:blocks.for_slicing, 0] == x 
-            #is_block_in_cell = is_block_in_cell[0]
+            is_block_in_cell = blocks.tracking_mat[0:blocks.for_slicing, 0] == x
             
             #erode blocks
             blocks.erode_blocks(is_block_in_cell, block__erodibility,
@@ -362,7 +373,7 @@ while elapsed_time < time_to_run:
                                 block_channel_weathering_rate)
             
             #delete blocks that have passed out of domain or eroded down to nothing
-            blocks.delete_eroded_or_gone_blocks(baselevel_node, blocks.for_slicing) 
+            blocks.delete_eroded_or_gone_blocks(baselevel_node, blocks.for_slicing)
         else:
             pass
         
@@ -375,12 +386,6 @@ while elapsed_time < time_to_run:
     
     mg.at_node['soil_production__rate'][channel_nodes] = 0
     
-    hog.weather_blocks(soil_production_rate,
-                       max_block_weathering_rate,
-                       underlying_soil_depth,
-                       soil_depth,
-                       timestep)    
-    
     #flux
     hillslopeflux.soilflux(timestep)
     
@@ -389,8 +394,12 @@ while elapsed_time < time_to_run:
     
     mg.at_node['bedrock__elevation'][baselevel_node] -= bl_drop * timestep
 	
-    #sum bedrock and soil to get topographic elevation
-    mg.at_node['topographic__elevation'][:] = mg.at_node['bedrock__elevation'] + mg.at_node['soil__depth']
+    #sum bedrock and soil to get topo elev
+    mg.at_node['topographic__elevation'][:] = mg.at_node['bedrock__elevation'] + mg.at_node['soil__depth']    
+
+    #get block locations
+    block_sizes[:] = 0
+    block_sizes[hog.block_locations] = hog.block_sizes                 
     
     #calc and save hillslope topography at 3 points every timestep
     downstream_channel_adjacent_node[hillslope_save_counter] = mg.at_node['topographic__elevation'][downstream_hillslope] - block_sizes[downstream_hillslope]
@@ -419,7 +428,7 @@ while elapsed_time < time_to_run:
         #save channel elevations over last save_profiles_every years
         np.save(directory + '/' + name_prefix + '_chan_elevs' + str(elapsed_time) + '.npy', channel_node_elevs_for_saving)
         channel_node_elevs_for_saving[:] = 0
-        
+  
         #save channel cover fractions over last save_profiles_every years
         np.save(directory + '/' + name_prefix + '_cover_fracs' + str(elapsed_time) + '.npy', channel_node_cover_fracs_for_saving)
         channel_node_cover_fracs_for_saving[:] = 0
@@ -429,13 +438,13 @@ while elapsed_time < time_to_run:
         
     if np.isclose(elapsed_time % save_topo_every, 0.): 
     	
-        #save topography as netcdf files
+        #save topography as netcdf and .npy
         if save_topo_flag == True:
             block_sizes[:] = 0
             block_sizes[hog.block_locations] = hog.block_sizes
             temp_chan_sizes = np.zeros(len(channel_nodes))
             for cn in range(len(channel_nodes)):
-                is_block_in_cell = blocks.tracking_mat[0:blocks.for_slicing, 0] == channel_nodes[cn] 
+                is_block_in_cell = blocks.tracking_mat[0:blocks.for_slicing, 0] == channel_nodes[cn]
                 mean_block_size = np.mean(blocks.tracking_mat[0:blocks.for_slicing, 1][is_block_in_cell])
                 hillslope_size = (np.power(mean_block_size, 3) * nrocks) / np.power(dx, 2)
                 temp_chan_sizes[cn] = hillslope_size
@@ -443,11 +452,6 @@ while elapsed_time < time_to_run:
             block_sizes[channel_nodes] = temp_chan_sizes[:]
             write_netcdf(directory + '/' + name_prefix + str(elapsed_time) + '.nc', mg, format='NETCDF3_64BIT', names=('topographic__elevation','block_sizes'))
             block_sizes[channel_nodes] = 0
-        
-        #save channel elevations as .npy
-        channel_node_elevs_for_saving = mg.at_node['topographic__elevation'][channel_nodes]
-        channel_node_elevs_for_saving = np.insert(channel_node_elevs_for_saving, 0, mg.at_node['topographic__elevation'][baselevel_node])
-        np.save(directory + '/' + name_prefix + '_chan_elev' + str(elapsed_time) + '.npy', channel_node_elevs_for_saving)
         
         print elapsed_time
     
