@@ -5,6 +5,8 @@ Developed by Rachel Glade and Charles Shobe at the University of Colorado Depart
 
 License: MIT.
 
+[![DOI](https://zenodo.org/badge/151611886.svg)](https://zenodo.org/badge/latestdoi/151611886)
+
 Paper: Glade, R.C.\*, Shobe, C.M.\*, Anderson, R.S., and Tucker, G.E. (_in revision_) Canyon evolution governed by channel-hillslope feedbacks. (\* equal contributions)
 
 A quick guide:
